@@ -126,13 +126,13 @@ public class MorningCheckFunction {
                 <p><b>Env:</b> %s<br/>
                    <b>Date:</b> %s</p>
 
-                <h3>🟦 Jobs – Compteurs (24h)</h3>
+                <h3> Jobs – Compteurs (24h)</h3>
                 %s
 
-                <h3>🔴 Anomalies (FAILED/ERROR/SUSPENDED)</h3>
+                <h3> Anomalies (FAILED/ERROR/SUSPENDED)</h3>
                 %s
 
-                <h3>🟠 Jobs potentiellement bloqués (&gt;60min)</h3>
+                <h3> Jobs potentiellement bloqués (&gt;60min)</h3>
                 %s
 
                 <hr/>
