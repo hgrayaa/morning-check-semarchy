@@ -33,9 +33,19 @@ jobs:
           sudo apt-get install -y azure-functions-core-tools-4
           func --version
 
-      - name: Build (Maven)
+      - name: Build and Package Azure Functions
         shell: bash
-        run: mvn -B clean package
+        run: mvn -B clean azure-functions:package
+
+      - name: Debug build output
+        shell: bash
+        run: |
+          echo "=== List target ==="
+          ls -la target || true
+          echo "=== List target/azure-functions ==="
+          ls -la target/azure-functions || true
+          echo "=== Find package directories ==="
+          find target/azure-functions -maxdepth 2 -type d -print || true
 
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1
