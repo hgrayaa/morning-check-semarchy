@@ -7,6 +7,7 @@ on:
 env:
   AZURE_FUNCTIONAPP_NAME: cdh-dev-af-01
   JAVA_VERSION: "17"
+  PROJECT_DIR: "."   # mets "morning-check-semarchy" si ton pom.xml est dans un sous-dossier
 
 jobs:
   build-and-deploy:
@@ -15,6 +16,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Debug repo tree
+        shell: bash
+        run: |
+          echo "PWD=$(pwd)"
+          ls -la
+          echo "---- find pom.xml ----"
+          find . -maxdepth 4 -name "pom.xml" -print
+          
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -35,24 +45,20 @@ jobs:
 
       - name: Build and Package Azure Functions
         shell: bash
-        run: mvn -B clean azure-functions:package
+        run: mvn -B -f ${{ env.PROJECT_DIR }}/pom.xml clean azure-functions:package
 
       - name: Detect Azure Functions package folder
         shell: bash
         run: |
-          echo "=== target ==="
-          ls -la target || true
-          echo "=== target/azure-functions ==="
-          ls -la target/azure-functions || true
-
-          PKG=$(find target/azure-functions -maxdepth 1 -mindepth 1 -type d | head -n 1)
+          BASE="${{ env.PROJECT_DIR }}/target/azure-functions"
+          echo "=== listing $BASE ==="
+          ls -la "$BASE" || true
+          PKG=$(find "$BASE" -maxdepth 1 -mindepth 1 -type d | head -n 1)
           echo "Detected package folder: $PKG"
-
           if [ -z "$PKG" ]; then
-            echo "No package folder found under target/azure-functions"
+            echo "No package folder found under $BASE"
             exit 1
           fi
-
           echo "FUNCTION_PACKAGE=$PKG" >> $GITHUB_ENV
 
       - name: Deploy to Azure Functions
