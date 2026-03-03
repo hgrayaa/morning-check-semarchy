@@ -13,7 +13,8 @@ public class MorningCheckFunction {
 
     // ✅ Planification : tous les jours à 07:30 (UTC par défaut)
     // Pour tester vite : "0 */5 * * * *" (toutes les 5 min) puis tu remets 07:30
-    private static final String CRON = "0 30 7 * * *";
+    // 0 30 7 * * *
+    private static final String CRON = "0 */5 * * * *";
 
     // --- SQL (adapte si besoin) ---
     private static final String SQL_STATUS_COUNTS = """
