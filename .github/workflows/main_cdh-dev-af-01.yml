@@ -32,6 +32,14 @@ jobs:
         shell: pwsh
         run: |+
           pushd './${{ env.PACKAGE_DIRECTORY }}'
+                - name: Install Azure Functions Core Tools
+          sudo apt-get update
+          sudo apt-get install -y curl apt-transport-https
+          curl https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/microsoft-ubuntu-$(lsb_release -rs)-prod $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/microsoft.list
+          sudo apt-get update
+          sudo apt-get install -y azure-functions-core-tools-4
+          func --version
           mvn clean package
           popd
       
@@ -45,3 +53,4 @@ jobs:
           respect-pom-xml: true
 
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_1AEAB7B8240C4D8E9D0B9B1127510D07 }}
+
