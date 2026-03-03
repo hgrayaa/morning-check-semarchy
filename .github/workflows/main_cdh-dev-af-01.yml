@@ -37,19 +37,27 @@ jobs:
         shell: bash
         run: mvn -B clean azure-functions:package
 
-      - name: Debug build output
+      - name: Detect Azure Functions package folder
         shell: bash
         run: |
-          echo "=== List target ==="
+          echo "=== target ==="
           ls -la target || true
-          echo "=== List target/azure-functions ==="
+          echo "=== target/azure-functions ==="
           ls -la target/azure-functions || true
-          echo "=== Find package directories ==="
-          find target/azure-functions -maxdepth 2 -type d -print || true
+
+          PKG=$(find target/azure-functions -maxdepth 1 -mindepth 1 -type d | head -n 1)
+          echo "Detected package folder: $PKG"
+
+          if [ -z "$PKG" ]; then
+            echo "No package folder found under target/azure-functions"
+            exit 1
+          fi
+
+          echo "FUNCTION_PACKAGE=$PKG" >> $GITHUB_ENV
 
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1
         with:
           app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
-          package: target/azure-functions/morning-check-semarchy
+          package: ${{ env.FUNCTION_PACKAGE }}
           publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
