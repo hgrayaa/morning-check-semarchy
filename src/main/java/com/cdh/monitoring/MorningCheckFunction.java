@@ -121,8 +121,8 @@ public class MorningCheckFunction {
             from semarchy_repository.mta_integ_batch mib
             join semarchy_repository.mta_data_location mdl
               on mdl."uuid" = mib.o_datalocation
-            where mib.status <> 'DONE'
-              and mib.upddate < now() - interval '%d hours'
+            where mib.status = 'ERROR'
+              and mib.upddate > now() - interval '%d hours'
             order by mib.upddate asc;
             """.formatted(hours);
     }
