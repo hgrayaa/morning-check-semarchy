@@ -3,7 +3,6 @@ package com.cdh.monitoring;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
-
 import java.util.Properties;
 
 public final class MailUtil {
@@ -45,3 +44,4 @@ public final class MailUtil {
         Transport.send(msg);
     }
 }
+
