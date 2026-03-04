@@ -326,7 +326,7 @@ public class MorningCheckFunction {
             sections.put("🟦 Jobs – Dernier job (global)", DbUtil.query(jdbcUrl, dbUser, dbPass, SQL_JOBS_LAST_GLOBAL));
             sections.put("🟦 Jobs – Dernier job par DataLocation", DbUtil.query(jdbcUrl, dbUser, dbPass, SQL_JOBS_LAST_PER_DATALOC));
             sections.put("🟦 Jobs – RUNNING/PENDING > " + STUCK_MINUTES + " min", DbUtil.query(jdbcUrl, dbUser, dbPass, sqlJobsRunningPendingOverXMin(STUCK_MINUTES)));
-            sections.put("🟦 Jobs – Bloqués != DONE > " + BLOCKED_HOURS + " h", DbUtil.query(jdbcUrl, dbUser, dbPass, sqlJobsBlockedNotDoneOverXHours(BLOCKED_HOURS)));
+            sections.put("🟦 Jobs – Bloqués > " + BLOCKED_HOURS + " h", DbUtil.query(jdbcUrl, dbUser, dbPass, sqlJobsBlockedNotDoneOverXHours(BLOCKED_HOURS)));
             List<Map<String, Object>> jobErrors = DbUtil.query(jdbcUrl, dbUser, dbPass, SQL_JOBS_FAILED_DETAILS_24H);
             sections.put("🟥 Jobs – Anomalies (FAILED/ERROR/SUSPENDED) (24h)", jobErrors);
 
@@ -390,7 +390,7 @@ public class MorningCheckFunction {
 
         StringBuilder sb = new StringBuilder();
         sb.append("<html><body style='font-family:Arial, sans-serif;'>");
-        sb.append("<h2>📅 MORNING CHECK – Semarchy xDM ").append(badge).append("</h2>");
+        sb.append("<h2>📅 MORNING CHECK - Elis MDM").append(badge).append("</h2>");
         sb.append("<p><b>Env:</b> ").append(escape(env)).append("<br/>")
           .append("<b>Date:</b> ").append(escape(now)).append("<br/>")
           .append("<b>Timer:</b> ").append(escape(timerInfo)).append("</p>");
