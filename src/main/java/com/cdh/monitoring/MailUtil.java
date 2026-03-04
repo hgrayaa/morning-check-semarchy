@@ -38,11 +38,12 @@ public final class MailUtil {
             }
         }
 
-        msg.setSubject(subject);
+        msg.setSubject(subject, "UTF-8");
         msg.setContent(htmlBody, "text/html; charset=UTF-8");
 
         Transport.send(msg);
     }
 }
+
 
 
