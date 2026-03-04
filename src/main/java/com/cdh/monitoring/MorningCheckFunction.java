@@ -195,7 +195,7 @@ public class MorningCheckFunction {
     private static final String SQL_MATCH_GROUPS_BY_RULE_24H = """
         select
           b_matchrule as match_rule,
-          count(distinct b_groupid) as match_groups,
+          count(distinct b_matchscore) as match_groups,
           count(*) as suspects
         from semarchy_data_location_account.du_account
         where b_credate >= now() - interval '24 hours'
