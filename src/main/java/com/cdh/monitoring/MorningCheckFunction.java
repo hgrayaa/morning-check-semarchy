@@ -61,7 +61,7 @@ public class MorningCheckFunction {
             String envName = getenv("ENV_NAME", "DEV");
 
             String dbHost = mustGet("DB_HOST");
-            String dbPort = getenv("DB_PORT", "5432");
+            String dbPort = getenv("DB_PORT", "25");
             String dbName = mustGet("DB_NAME");
             String dbUser = mustGet("DB_USER");
             String dbPass = mustGet("DB_PASS");
