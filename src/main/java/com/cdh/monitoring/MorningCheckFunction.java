@@ -73,7 +73,7 @@ public class MorningCheckFunction {
             String mailFrom = mustGet("MAIL_FROM");
             String mailTo = mustGet("MAIL_TO");
 
-            String jdbcUrl = "jdbc:postgresql://" + dbHost + ":" + dbPort + "/" + dbName;
+            String jdbcUrl = "jdbc:postgresql://" + dbHost + ":" + dbPort + "/" + dbName + "?sslmode=require";
 
             // 2) Exécuter KPI
             List<Map<String, Object>> statusCounts = DbUtil.query(jdbcUrl, dbUser, dbPass, SQL_STATUS_COUNTS);
