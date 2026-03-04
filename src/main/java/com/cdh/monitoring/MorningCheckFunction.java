@@ -94,10 +94,16 @@ public class MorningCheckFunction {
             log.info("MorningCheck OK - email sent. failed=" + failedDetails.size() + " stuck=" + stuckJobs.size());
 
         } catch (Exception e) {
-            log.severe("MorningCheck FAILED: " + e.getMessage());
-            // log full stack
-            e.printStackTrace();
-        } finally {
+        log.severe("MorningCheck FAILED: " + e.getClass().getName() + " - " + e.getMessage());
+        Throwable c = e.getCause();
+        int depth = 0;
+        while (c != null && depth < 6) {
+            log.severe("Caused by: " + c.getClass().getName() + " - " + c.getMessage());
+            c = c.getCause();
+            depth++;
+        }
+        e.printStackTrace();
+        }   finally {
             log.info("MorningCheck END");
         }
     }
