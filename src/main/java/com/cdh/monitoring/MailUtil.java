@@ -4,51 +4,51 @@ import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeUtility;
+
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 
-public final class MailUtil {
+public class MailUtil {
 
-    private MailUtil() {}
-
-    public static void sendHtml(String host, int port, String user, String pass,
-                                String from, String toCsv,
-                                String subject, String htmlBody) throws MessagingException {
+    public static void sendHtml(
+            String smtpHost,
+            int smtpPort,
+            String smtpUser,
+            String smtpPass,
+            String mailFrom,
+            String mailTo,
+            String subject,
+            String html
+    ) throws Exception {
 
         Properties props = new Properties();
+        props.put("mail.smtp.host", smtpHost);
+        props.put("mail.smtp.port", String.valueOf(smtpPort));
         props.put("mail.smtp.auth", "false");
         props.put("mail.smtp.starttls.enable", "true");
-        props.put("mail.smtp.host", host);
-        props.put("mail.smtp.port", String.valueOf(port));
+
+        // Optionnel mais utile en prod
         props.put("mail.smtp.connectiontimeout", "15000");
-        props.put("mail.smtp.timeout", "20000");
-        props.put("mail.smtp.writetimeout", "20000");
+        props.put("mail.smtp.timeout", "30000");
+        props.put("mail.smtp.writetimeout", "30000");
 
         Session session = Session.getInstance(props, new Authenticator() {
-            @Override protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(user, pass);
+            @Override
+            protected PasswordAuthentication getPasswordAuthentication() {
+                return new PasswordAuthentication(smtpUser, smtpPass);
             }
         });
 
-        Message msg = new MimeMessage(session);
-        msg.setFrom(new InternetAddress(from));
+        MimeMessage message = new MimeMessage(session);
+        message.setFrom(new InternetAddress(mailFrom));
+        message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(mailTo));
 
-        for (String t : toCsv.split(",")) {
-            String email = t.trim();
-            if (!email.isEmpty()) {
-                msg.addRecipient(Message.RecipientType.TO, new InternetAddress(email));
-            }
-        }
- 
-        message.setSubject(MimeUtility.encodeText(subject, "UTF-8", "Q"));
-        msg.setContent(htmlBody, "text/html; charset=UTF-8");
+        // ✅ Subject UTF-8 compatible Jakarta Mail
+        message.setSubject(MimeUtility.encodeText(subject, StandardCharsets.UTF_8.name(), "Q"));
 
-        Transport.send(msg);
+        // ✅ HTML UTF-8
+        message.setContent(html, "text/html; charset=UTF-8");
+
+        Transport.send(message);
     }
 }
-
-
-
-
-
-
-
