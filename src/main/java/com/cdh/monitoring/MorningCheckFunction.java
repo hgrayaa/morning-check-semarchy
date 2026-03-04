@@ -26,7 +26,7 @@ public class MorningCheckFunction {
     // ✅ Scheduling:
     //   - Production example: "0 30 7 * * *"  (07:30 UTC)
     //   - Quick test:         "0 */5 * * * *" (every 5 minutes)
-    private static final String CRON = "0 */5 * * * *";
+    private static final String CRON = "0 30 7 * * *";
 
     // ---------- A) Jobs & Integration ----------
     private static final String SQL_JOBS_STATUS_COUNTS_24H = """
