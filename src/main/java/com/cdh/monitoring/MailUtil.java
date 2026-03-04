@@ -3,6 +3,7 @@ package com.cdh.monitoring;
 import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.MimeUtility;
 import java.util.Properties;
 
 public final class MailUtil {
@@ -38,12 +39,13 @@ public final class MailUtil {
             }
         }
  
-        msg.setSubject(subject, "UTF-8");
+        message.setSubject(MimeUtility.encodeText(subject, "UTF-8", "Q"));
         msg.setContent(htmlBody, "text/html; charset=UTF-8");
 
         Transport.send(msg);
     }
 }
+
 
 
 
