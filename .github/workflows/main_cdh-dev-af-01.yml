@@ -14,28 +14,25 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-
-      # Checkout repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Debug repository structure
       - name: Debug repository structure
+        shell: bash
         run: |
           echo "PWD=$(pwd)"
           ls -la
           echo "----- FIND pom.xml -----"
           find . -maxdepth 4 -name "pom.xml" -print
 
-      # Setup Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
 
-      # Install Azure Functions Core Tools
-      - name: Install Azure Functions Core Tools
+      - name: Install Azure Functions Core Tools (v4)
+        shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y curl gnupg apt-transport-https
@@ -45,58 +42,47 @@ jobs:
           sudo apt-get install -y azure-functions-core-tools-4
           func --version
 
-      # Verify source code exists
       - name: Debug Java sources
+        shell: bash
         run: |
           echo "----- Java sources -----"
-          find src -maxdepth 4 -type f -print || true
-
+          find src -maxdepth 6 -type f -print || true
           echo "----- Function annotations -----"
-          grep -R "@FunctionName" src/main/java || true
-          grep -R "@TimerTrigger" src/main/java || true
+          grep -R --line-number "@FunctionName" src/main/java || true
+          grep -R --line-number "@TimerTrigger"  src/main/java || true
 
-      # Build project
-      - name: Build project
-        run: mvn -B -e clean compile
+      # ✅ IMPORTANT : build the JAR first
+      - name: Build JAR (Maven package)
+        shell: bash
+        run: mvn -B -e clean package
 
-      # Package Azure Functions
+      # ✅ Then generate the Azure Functions staging folder
       - name: Package Azure Functions
+        shell: bash
         run: mvn -B -e azure-functions:package
 
-      # Debug build output
       - name: Debug build output
+        shell: bash
         run: |
           echo "----- TARGET -----"
           ls -la target || true
-
-          echo "----- AZURE FUNCTIONS FOLDER -----"
+          echo "----- TARGET/AZURE-FUNCTIONS -----"
           ls -la target/azure-functions || true
+          echo "----- LIST SUBFOLDERS -----"
+          find target/azure-functions -maxdepth 2 -type d -print || true
 
-          echo "----- FIND PACKAGE -----"
-          find target -maxdepth 4 -type d -name "azure-functions" -print || true
-
-      # Detect function package
       - name: Detect Azure Function package folder
+        shell: bash
         run: |
           BASE="target/azure-functions"
-
-          if [ ! -d "$BASE" ]; then
-            echo "Azure Functions package folder not found"
-            exit 1
-          fi
-
           PKG=$(find "$BASE" -maxdepth 1 -mindepth 1 -type d | head -n 1)
-
           echo "Detected package folder: $PKG"
-
           if [ -z "$PKG" ]; then
-            echo "No package found"
+            echo "No package found under $BASE"
             exit 1
           fi
-
           echo "FUNCTION_PACKAGE=$PKG" >> $GITHUB_ENV
 
-      # Deploy to Azure
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1
         with:
