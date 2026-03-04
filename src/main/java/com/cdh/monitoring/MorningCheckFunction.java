@@ -357,7 +357,7 @@ public class MorningCheckFunction {
             String html = buildHtml(envName, now, timerInfo, sections, hasRed);
 
             // 4) Send email
-            //String subject = emoji + " Morning Check Semarchy xDM – " + envName + " – " + now;
+            // String subject = emoji + " Morning Check Semarchy xDM – " + envName + " – " + now;
             String subject = (hasRed ? "[ALERT]" : "[OK]") + " Morning Check Semarchy xDM - MDM" + envName + " - " + now;
             MailUtil.sendHtml(smtpHost, smtpPort, smtpUser, smtpPass, mailFrom, mailTo, subject, html);
 
