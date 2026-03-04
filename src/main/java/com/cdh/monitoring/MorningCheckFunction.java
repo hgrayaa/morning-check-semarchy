@@ -173,10 +173,10 @@ public class MorningCheckFunction {
 
     private static final String SQL_GOLDEN_BY_STATUS = """
         select
-          b_status,
+          b_pubid,
           count(*) as nb
         from semarchy_data_location_account.md_account
-        group by b_status
+        group by b_pubid
         order by nb desc;
         """;
 
