@@ -6,11 +6,12 @@ import com.microsoft.azure.functions.annotation.TimerTrigger;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
 
 public class SemarchyAlertFunction {
 
-    // Check toutes les 5 minutes 
+    // Check toutes les 5 minutes
     private static final String CRON = "0 */5 * * * *";
 
     private static final int ENGINE_IDLE_MINUTES =
@@ -19,7 +20,7 @@ public class SemarchyAlertFunction {
     private static final int JOB_BLOCKED_MINUTES =
             Integer.parseInt(getenv("JOB_BLOCKED_MINUTES", "15"));
 
-    // 1) Jobs suspendus / bloqués
+    // 1) Jobs uniquement SUSPENDED / FAILED
     private static String sqlBlockedJobs(int minutes) {
         return """
             select
@@ -33,13 +34,13 @@ public class SemarchyAlertFunction {
             from semarchy_repository.mta_integ_batch mib
             join semarchy_repository.mta_data_location mdl
               on mdl."uuid" = mib.o_datalocation
-            where mib.status in ('SUSPENDED','FAILED','ERROR','RUNNING','PENDING')
-              and mib.upddate < now() - interval '%d minutes'
+            where mib.status in ('SUSPENDED','FAILED')
+              and mib.upddate < now() - (%d * interval '1 minute')
             order by mib.upddate asc;
             """.formatted(minutes);
     }
 
-    // 2) Data notifications en erreur / suspendues 
+    // 2) Data notifications en erreur / suspendues
     private static final String SQL_DATA_NOTIF_ERRORS = """
         select
           dn."name" as notif_name,
@@ -68,12 +69,12 @@ public class SemarchyAlertFunction {
               now() - max(upddate) as age,
               case
                 when max(upddate) is null then 'NO_BATCH_FOUND'
-                when max(upddate) < now() - interval '%d minutes' then 'ENGINE_PROBABLY_STOPPED'
+                when max(upddate) < now() - (%d * interval '1 minute') then 'ENGINE_PROBABLY_STOPPED'
                 else 'OK'
               end as engine_status
             from semarchy_repository.mta_integ_batch
             having max(upddate) is null
-                or max(upddate) < now() - interval '%d minutes';
+                or max(upddate) < now() - (%d * interval '1 minute');
             """.formatted(minutes, minutes);
     }
 
@@ -114,8 +115,8 @@ public class SemarchyAlertFunction {
 
             boolean hasAlert =
                     hasRows(blockedJobs)
-                    || hasRows(notifErrors)
-                    || hasRows(engineStopped);
+                            || hasRows(notifErrors)
+                            || hasRows(engineStopped);
 
             if (!hasAlert) {
                 log.info("No alert detected. No email sent.");
@@ -124,7 +125,7 @@ public class SemarchyAlertFunction {
 
             String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
 
-            String subject = "[ALERT] Semarchy xDM Monitoring - " + envName + " - " + now;
+            String subject = "[ALERT] MDM Account Monitoring - " + envName + " - " + now;
 
             String html = buildHtml(
                     envName,
@@ -189,17 +190,18 @@ public class SemarchyAlertFunction {
         sb.append("<html><body style='font-family:Arial, sans-serif;'>");
 
         sb.append("<h2 style='color:#a60000;'>")
-          .append("[ALERT] Semarchy xDM Monitoring")
-          .append("</h2>");
+                .append("<span style='display:inline-block;width:12px;height:12px;background:#d00000;border-radius:50%;margin-right:8px;'></span>")
+                .append("[ALERT] MDM Account Monitoring")
+                .append("</h2>");
 
         sb.append("<p>")
-          .append("<b>Env:</b> ").append(env).append("<br/>")
-          .append("<b>Date:</b> ").append(now).append("<br/>")
-          .append("<b>Fréquence:</b> toutes les 5 minutes")
-          .append("</p>");
+                .append("<b>Env:</b> ").append(env).append("<br/>")
+                .append("<b>Date:</b> ").append(now).append("<br/>")
+                .append("<b>Fréquence:</b> toutes les 5 minutes")
+                .append("</p>");
 
         if (hasRows(blockedJobs)) {
-            sb.append("<h3>🟦 Jobs – Bloqués / Suspendus</h3>");
+            sb.append("<h3>🟦 Jobs – SUSPENDED / FAILED</h3>");
             sb.append(DbUtil.toHtmlTable(blockedJobs));
         }
 
@@ -211,17 +213,17 @@ public class SemarchyAlertFunction {
         if (hasRows(engineStopped)) {
             sb.append("<h3>🟥 Semarchy Engine probablement arrêté</h3>");
             sb.append("<p style='color:#a60000;'>")
-              .append("Aucun batch récent détecté. Dernier batch exécuté il y a plus de ")
-              .append(ENGINE_IDLE_MINUTES)
-              .append(" minutes.")
-              .append("</p>");
+                    .append("Aucun batch récent détecté. Dernier batch exécuté il y a plus de ")
+                    .append(ENGINE_IDLE_MINUTES)
+                    .append(" minutes.")
+                    .append("</p>");
             sb.append(DbUtil.toHtmlTable(engineStopped));
         }
 
         sb.append("<hr/>")
-          .append("<p style='color:#666;font-size:12px;'>")
-          .append("Generated by Azure Function Java - Semarchy Alert Monitoring")
-          .append("</p>");
+                .append("<p style='color:#666;font-size:12px;'>")
+                .append("Generated by Azure Function Java - MDM Account Monitoring")
+                .append("</p>");
 
         sb.append("</body></html>");
 
