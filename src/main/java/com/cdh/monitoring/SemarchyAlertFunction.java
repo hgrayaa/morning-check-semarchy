@@ -109,6 +109,15 @@ public class SemarchyAlertFunction {
             List<Map<String, Object>> engineStopped =
                     DbUtil.query(jdbcUrl, dbUser, dbPass, sqlEngineProbablyStopped(ENGINE_IDLE_MINUTES));
 
+            log.info("JOB_BLOCKED_MINUTES=" + JOB_BLOCKED_MINUTES);
+            log.info("blockedJobs SQL = " + sqlBlockedJobs(JOB_BLOCKED_MINUTES));
+            
+            List<Map<String, Object>> blockedJobs =
+                    DbUtil.query(jdbcUrl, dbUser, dbPass, sqlBlockedJobs(JOB_BLOCKED_MINUTES));
+            
+            log.info("blockedJobs size = " + (blockedJobs == null ? -1 : blockedJobs.size()));
+            log.info("blockedJobs content = " + blockedJobs);
+            
             boolean hasAlert =
                     hasRows(blockedJobs)
                             || hasRows(notifErrors)
