@@ -34,6 +34,11 @@ jobs:
       - name: Install Azure Functions Core Tools (v4)
         shell: bash
         run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft.list
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
+          sudo rm -f /etc/apt/sources.list.d/packages-microsoft-com-prod.list
+          sudo rm -f /usr/share/keyrings/microsoft.gpg
+          sudo rm -f /usr/share/keyrings/microsoft-prod.gpg
           sudo apt-get update
           sudo apt-get install -y curl gnupg apt-transport-https
           curl -sL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
