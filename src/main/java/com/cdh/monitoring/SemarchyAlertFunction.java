@@ -179,9 +179,8 @@ public class SemarchyAlertFunction {
         sb.append("<html><body style='font-family:Arial, sans-serif;font-size:13px;'>");
 
         sb.append("<h2 style='color:#a60000;'>")
-                .append("<span style='display:inline-block;width:12px;height:12px;background:#d00000;border-radius:50%;margin-right:8px;'></span>")
-                .append("[ALERT] MDM Account Monitoring")
-                .append("</h2>");
+          .append("🔴 [ALERT] MDM Account Monitoring")
+          .append("</h2>");
 
         sb.append("<p>")
                 .append("<b>Env:</b> ").append(escape(env)).append("<br/>")
@@ -190,7 +189,7 @@ public class SemarchyAlertFunction {
                 .append("</p>");
 
         if (hasRows(blockedJobs)) {
-            sb.append("<h3>🟦 Jobs – SUSPENDED / FAILED</h3>");
+            sb.append("<h3>🟥 Jobs – SUSPENDED / FAILED</h3>");
             sb.append(actionBlock("""
                 Actions recommandées :
                 1. Aller dans Semarchy > Application Builder > Management > Moteur d’exécution.
