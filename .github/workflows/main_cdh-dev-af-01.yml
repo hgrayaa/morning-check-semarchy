@@ -76,7 +76,7 @@ jobs:
         run: |
           BASE="target/azure-functions"
           PKG=$(find "$BASE" -maxdepth 1 -mindepth 1 -type d | head -n 1)
-          echo "Detected package folder: $PKG"
+          echo "Detected package folder : $PKG"
           if [ -z "$PKG" ]; then
             echo "No package found under $BASE"
             exit 1
