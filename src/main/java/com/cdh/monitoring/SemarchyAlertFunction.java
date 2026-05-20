@@ -11,7 +11,6 @@ import java.util.Map;
 
 public class SemarchyAlertFunction {
 
-    // Check toutes les 5 minutes
     private static final String CRON = "0 */5 * * * *";
 
     private static final int ENGINE_IDLE_MINUTES =
@@ -20,7 +19,6 @@ public class SemarchyAlertFunction {
     private static final int JOB_BLOCKED_MINUTES =
             Integer.parseInt(getenv("JOB_BLOCKED_MINUTES", "15"));
 
-    // 1) Jobs uniquement SUSPENDED / FAILED
     private static String sqlBlockedJobs(int minutes) {
         return """
             select
@@ -30,7 +28,7 @@ public class SemarchyAlertFunction {
               mib.upddate,
               now() - mib.upddate as age,
               mib.batchid,
-              left(coalesce(mib.job_message,''), 600) as job_message
+              left(coalesce(mib.job_message,''), 250) as job_message
             from semarchy_repository.mta_integ_batch mib
             join semarchy_repository.mta_data_location mdl
               on mdl."uuid" = mib.o_datalocation
@@ -40,7 +38,6 @@ public class SemarchyAlertFunction {
             """.formatted(minutes);
     }
 
-    // 2) Data notifications en erreur / suspendues
     private static final String SQL_DATA_NOTIF_ERRORS = """
         select
           dn."name" as notif_name,
@@ -49,7 +46,7 @@ public class SemarchyAlertFunction {
           dnl.attempt_count,
           dnl.record_count,
           dnl.message_count,
-          left(coalesce(dnl.error_message,''), 800) as error_message
+          left(coalesce(dnl.error_message,''), 350) as error_message
         from semarchy_repository.mta_data_notif_log dnl
         join semarchy_repository.mta_data_notif dn
           on dn."uuid" = dnl.r_datanotif
@@ -61,7 +58,6 @@ public class SemarchyAlertFunction {
         order by event_ts desc;
         """;
 
-    // 3) Engine probablement arrêté : aucun batch récent
     private static String sqlEngineProbablyStopped(int minutes) {
         return """
             select
@@ -124,16 +120,9 @@ public class SemarchyAlertFunction {
             }
 
             String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
-
             String subject = "[ALERT] MDM Account Monitoring - " + envName + " - " + now;
 
-            String html = buildHtml(
-                    envName,
-                    now,
-                    blockedJobs,
-                    notifErrors,
-                    engineStopped
-            );
+            String html = buildHtml(envName, now, blockedJobs, notifErrors, engineStopped);
 
             MailUtil.sendHtml(
                     smtpHost,
@@ -187,7 +176,7 @@ public class SemarchyAlertFunction {
     ) {
         StringBuilder sb = new StringBuilder();
 
-        sb.append("<html><body style='font-family:Arial, sans-serif;'>");
+        sb.append("<html><body style='font-family:Arial, sans-serif;font-size:13px;'>");
 
         sb.append("<h2 style='color:#a60000;'>")
                 .append("<span style='display:inline-block;width:12px;height:12px;background:#d00000;border-radius:50%;margin-right:8px;'></span>")
@@ -195,29 +184,51 @@ public class SemarchyAlertFunction {
                 .append("</h2>");
 
         sb.append("<p>")
-                .append("<b>Env:</b> ").append(env).append("<br/>")
-                .append("<b>Date:</b> ").append(now).append("<br/>")
+                .append("<b>Env:</b> ").append(escape(env)).append("<br/>")
+                .append("<b>Date:</b> ").append(escape(now)).append("<br/>")
                 .append("<b>Fréquence:</b> toutes les 5 minutes")
                 .append("</p>");
 
         if (hasRows(blockedJobs)) {
             sb.append("<h3>🟦 Jobs – SUSPENDED / FAILED</h3>");
-            sb.append(DbUtil.toHtmlTable(blockedJobs));
+            sb.append(actionBlock("""
+                Actions recommandées :
+                1. Aller dans Semarchy > Application Builder > Management > Moteur d’exécution.
+                2. Redémarrer le job depuis le moteur d’exécution.
+                3. Analyser ensuite l’erreur dans la colonne job_message.
+                """));
+            sb.append(toAlertHtmlTable(blockedJobs));
         }
 
         if (hasRows(notifErrors)) {
-            sb.append("<h3>🟥 Data Notifications – Erreurs</h3>");
-            sb.append(DbUtil.toHtmlTable(notifErrors));
+            sb.append("<h3>🟥 Data Notifications – Erreurs / Suspensions</h3>");
+            sb.append(actionBlock("""
+                Actions recommandées :
+                1. Aller dans Semarchy > Application Builder > Management > Notifications des données.
+                2. Double-cliquer sur la notification en erreur.
+                3. Déplier la notification suspendue.
+                4. Afficher les logs dans les derniers journaux.
+                5. Analyser l’erreur de suspension.
+                6. Cliquer sur le bouton d’action puis sélectionner : traiter ces instances de notifications en un lot.
+                """));
+            sb.append(toAlertHtmlTable(notifErrors));
         }
 
         if (hasRows(engineStopped)) {
             sb.append("<h3>🟥 Semarchy Engine probablement arrêté</h3>");
+            sb.append(actionBlock("""
+                Actions recommandées :
+                1. Aller dans Semarchy > Application Builder > Management > Moteur d’exécution.
+                2. Vérifier l’état du moteur.
+                3. Appuyer sur le bouton Play vert pour redémarrer le moteur d’exécution.
+                4. Relancer ensuite le check ou attendre la prochaine exécution automatique.
+                """));
             sb.append("<p style='color:#a60000;'>")
                     .append("Aucun batch récent détecté. Dernier batch exécuté il y a plus de ")
                     .append(ENGINE_IDLE_MINUTES)
                     .append(" minutes.")
                     .append("</p>");
-            sb.append(DbUtil.toHtmlTable(engineStopped));
+            sb.append(toAlertHtmlTable(engineStopped));
         }
 
         sb.append("<hr/>")
@@ -228,6 +239,78 @@ public class SemarchyAlertFunction {
         sb.append("</body></html>");
 
         return sb.toString();
+    }
+
+    private static String actionBlock(String text) {
+        return "<div style='background:#fff4e5;border-left:4px solid #f59f00;"
+                + "padding:10px;margin:8px 0 12px 0;font-size:13px;line-height:1.45;'>"
+                + "<pre style='font-family:Arial, sans-serif;white-space:pre-wrap;margin:0;'>"
+                + escape(text.trim())
+                + "</pre></div>";
+    }
+
+    private static String toAlertHtmlTable(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return "<p style='color:#2e7d32;'>Aucun élément</p>";
+        }
+
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("<table style='border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:12px;table-layout:fixed;'>");
+
+        sb.append("<tr style='background:#f2f2f2;'>");
+        for (String col : rows.get(0).keySet()) {
+            sb.append("<th style='border:1px solid #ccc;padding:6px;text-align:left;'>")
+                    .append(escape(col))
+                    .append("</th>");
+        }
+        sb.append("</tr>");
+
+        for (Map<String, Object> row : rows) {
+            sb.append("<tr>");
+
+            for (Map.Entry<String, Object> cell : row.entrySet()) {
+                String col = cell.getKey();
+                String value = cell.getValue() == null ? "" : String.valueOf(cell.getValue());
+
+                String style = "border:1px solid #ccc;padding:6px;vertical-align:top;"
+                        + "white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;";
+
+                if ("job_message".equalsIgnoreCase(col) || "error_message".equalsIgnoreCase(col)) {
+                    style += "max-width:260px;width:260px;";
+                    value = wrapText(value, 55);
+                }
+
+                sb.append("<td style='").append(style).append("'>")
+                        .append(escape(value))
+                        .append("</td>");
+            }
+
+            sb.append("</tr>");
+        }
+
+        sb.append("</table>");
+        return sb.toString();
+    }
+
+    private static String wrapText(String text, int maxLineLength) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        int count = 0;
+
+        for (String word : text.split("\\s+")) {
+            if (count + word.length() > maxLineLength) {
+                sb.append("\n");
+                count = 0;
+            }
+            sb.append(word).append(" ");
+            count += word.length() + 1;
+        }
+
+        return sb.toString().trim();
     }
 
     private static boolean hasRows(List<Map<String, Object>> rows) {
@@ -245,5 +328,13 @@ public class SemarchyAlertFunction {
     private static String getenv(String key, String def) {
         String v = System.getenv(key);
         return (v == null || v.isBlank()) ? def : v.trim();
+    }
+
+    private static String escape(String s) {
+        if (s == null) return "";
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
     }
 }
