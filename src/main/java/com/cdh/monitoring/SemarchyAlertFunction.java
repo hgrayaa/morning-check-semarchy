@@ -10,7 +10,7 @@ import java.util.*;
 
 public class SemarchyAlertFunction {
 
-    // Check toutes les 5 minutes
+    // Check toutes les 5 minutes 
     private static final String CRON = "0 */5 * * * *";
 
     private static final int ENGINE_IDLE_MINUTES =
