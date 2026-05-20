@@ -39,7 +39,7 @@ public class SemarchyAlertFunction {
             """.formatted(minutes);
     }
 
-    // 2) Data notifications en erreur / suspendues
+    // 2) Data notifications en erreur / suspendues 
     private static final String SQL_DATA_NOTIF_ERRORS = """
         select
           dn."name" as notif_name,
