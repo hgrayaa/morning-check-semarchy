@@ -33,7 +33,6 @@ public class SemarchyAlertFunction {
             join semarchy_repository.mta_data_location mdl
               on mdl."uuid" = mib.o_datalocation
             where mib.status in ('SUSPENDED','FAILED')
-              and mib.upddate < now() - (%d * interval '1 minute')
             order by mib.upddate asc;
             """.formatted(minutes);
     }
