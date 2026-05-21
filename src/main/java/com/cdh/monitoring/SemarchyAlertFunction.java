@@ -51,7 +51,7 @@ public class SemarchyAlertFunction {
           on dn."uuid" = dnl.r_datanotif
         where coalesce(dnl."timestamp", dnl.upddate, dnl.credate) >= now() - interval '15 minutes'
           and (
-            dnl.execution_status in ('FAILED','ERROR','SUSPENDED')
+            dnl.execution_status in ('FAILED','SUSPENDED')
             or dnl.error_message is not null
           )
         order by event_ts desc;
