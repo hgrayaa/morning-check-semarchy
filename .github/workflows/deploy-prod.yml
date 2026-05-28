@@ -1,0 +1,93 @@
+name: Build and deploy to PROD
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release/prod
+
+env:
+  AZURE_FUNCTIONAPP_NAME: cdh-prd-af-01
+  JAVA_VERSION: "17"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-and-deploy-prod:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Debug repository
+        shell: bash
+        run: |
+          echo "PWD=$(pwd)"
+          ls -la
+          echo "----- Java functions -----"
+          grep -R --line-number "@FunctionName" src/main/java || true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Install Azure Functions Core Tools
+        shell: bash
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft.list
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
+          sudo rm -f /etc/apt/sources.list.d/packages-microsoft-com-prod.list
+          sudo rm -f /usr/share/keyrings/microsoft.gpg
+          sudo rm -f /usr/share/keyrings/microsoft-prod.gpg
+
+          sudo apt-get update
+          sudo apt-get install -y curl gnupg apt-transport-https
+
+          curl -sL https://packages.microsoft.com/keys/microsoft.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/22.04/prod jammy main" \
+            | sudo tee /etc/apt/sources.list.d/microsoft-prod.list
+
+          sudo apt-get update
+          sudo apt-get install -y azure-functions-core-tools-4
+
+          func --version
+
+      - name: Build JAR
+        shell: bash
+        run: mvn -B -e clean package
+
+      - name: Package Azure Functions
+        shell: bash
+        run: mvn -B -e azure-functions:package
+
+      - name: Debug package output
+        shell: bash
+        run: |
+          echo "----- target/azure-functions -----"
+          ls -la target/azure-functions || true
+          find target/azure-functions -maxdepth 3 -type f -name "function.json" -print || true
+
+      - name: Detect package folder
+        shell: bash
+        run: |
+          BASE="target/azure-functions"
+          PKG=$(find "$BASE" -maxdepth 1 -mindepth 1 -type d | head -n 1)
+
+          if [ -z "$PKG" ]; then
+            echo "No Azure Functions package folder found"
+            exit 1
+          fi
+
+          echo "FUNCTION_PACKAGE=$PKG" >> $GITHUB_ENV
+          echo "Detected package folder: $PKG"
+
+      - name: Deploy to PROD Function App
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
+          package: ${{ env.FUNCTION_PACKAGE }}
+          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE_PROD }}
