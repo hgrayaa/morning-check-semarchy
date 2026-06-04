@@ -5,101 +5,32 @@ import com.microsoft.azure.functions.annotation.FunctionName;
 import com.microsoft.azure.functions.annotation.TimerTrigger;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
 
-public class MorningCheckFunction {
+public class SemarchyAlertFunction {
 
-    private static final String CRON = "0 30 7 * * *";
+    private static final String CRON = "0 */5 * * * *";
 
-    private static final int STUCK_MINUTES =
-            Integer.parseInt(getenv("STUCK_MINUTES", "60"));
+    private static final String MONITORING_TIMEZONE =
+            getenv("MONITORING_TIMEZONE", "Europe/Paris");
 
-    private static final int BLOCKED_HOURS =
-            Integer.parseInt(getenv("BLOCKED_HOURS", "24"));
+    private static final int MONITORING_START_HOUR =
+            Integer.parseInt(getenv("MONITORING_START_HOUR", "7"));
 
-    private static final int ENGINE_STOPPED_HOURS =
-            Integer.parseInt(getenv("ENGINE_STOPPED_HOURS", "8"));
+    private static final int MONITORING_END_HOUR =
+            Integer.parseInt(getenv("MONITORING_END_HOUR", "22"));
 
-    private static final String SQL_JOBS_STATUS_COUNTS_24H = """
-        select
-          coalesce(mib.status,'(null)') as status,
-          count(*) as nb
-        from semarchy_repository.mta_integ_batch mib
-        where mib.upddate >= now() - interval '24 hours'
-        group by coalesce(mib.status,'(null)')
-        order by nb desc;
-        """;
+    private static final int ENGINE_IDLE_MINUTES =
+            Integer.parseInt(getenv("ENGINE_IDLE_MINUTES", "15"));
 
-    private static final String SQL_JOBS_STATUS_BY_DATALOC_24H = """
-        select
-          mdl."name" as datalocation,
-          mib.status,
-          count(*) as nb
-        from semarchy_repository.mta_integ_batch mib
-        join semarchy_repository.mta_data_location mdl
-          on mdl."uuid" = mib.o_datalocation
-        where mib.upddate >= now() - interval '24 hours'
-        group by mdl."name", mib.status
-        order by mdl."name", nb desc;
-        """;
+    private static final int JOB_BLOCKED_MINUTES =
+            Integer.parseInt(getenv("JOB_BLOCKED_MINUTES", "15"));
 
-    private static final String SQL_JOBS_LAST_GLOBAL = """
-        select
-          mdl."name" as datalocation,
-          mib.upddate,
-          mib.status,
-          mib.job_name,
-          mib.batchid,
-          left(coalesce(mib.job_message,''),400) as job_message
-        from semarchy_repository.mta_integ_batch mib
-        join semarchy_repository.mta_data_location mdl
-          on mdl."uuid" = mib.o_datalocation
-        order by mib.upddate desc
-        limit 1;
-        """;
-
-    private static final String SQL_JOBS_LAST_PER_DATALOC = """
-        select *
-        from (
-          select
-            mdl."name" as datalocation,
-            mib.upddate,
-            mib.status,
-            mib.job_name,
-            mib.batchid,
-            left(coalesce(mib.job_message,''),200) as job_message,
-            row_number() over (
-              partition by mdl."name"
-              order by mib.upddate desc
-            ) as rn
-          from semarchy_repository.mta_integ_batch mib
-          join semarchy_repository.mta_data_location mdl
-            on mdl."uuid" = mib.o_datalocation
-        ) x
-        where x.rn = 1
-        order by x.upddate desc;
-        """;
-
-    private static String sqlJobsRunningPendingOverXMin(int minutes) {
-        return """
-            select
-              mdl."name" as datalocation,
-              mib.job_name,
-              mib.status,
-              mib.upddate,
-              now() - mib.upddate as running_since,
-              mib.batchid
-            from semarchy_repository.mta_integ_batch mib
-            join semarchy_repository.mta_data_location mdl
-              on mdl."uuid" = mib.o_datalocation
-            where mib.status in ('RUNNING','PENDING')
-              and mib.upddate < now() - (%d * interval '1 minute')
-            order by mib.upddate asc;
-            """.formatted(minutes);
-    }
-
-    private static String sqlJobsBlockedNotDoneOverXHours(int hours) {
+    private static String sqlBlockedJobs(int minutes) {
         return """
             select
               mdl."name" as datalocation,
@@ -108,175 +39,74 @@ public class MorningCheckFunction {
               mib.upddate,
               now() - mib.upddate as age,
               mib.batchid,
-              left(coalesce(mib.job_message,''),400) as job_message
+              left(coalesce(mib.job_message,''), 250) as job_message
             from semarchy_repository.mta_integ_batch mib
             join semarchy_repository.mta_data_location mdl
               on mdl."uuid" = mib.o_datalocation
-            where mib.status = 'ERROR'
-              and mib.upddate > now() - (%d * interval '1 hour')
+            where mib.status in ('SUSPENDED','FAILED')
             order by mib.upddate asc;
-            """.formatted(hours);
+            """;
     }
 
-    private static final String SQL_JOBS_FAILED_DETAILS_24H = """
+    private static final String SQL_DATA_NOTIF_ERRORS = """
         select
-          mdl."name" as datalocation,
-          mib.upddate,
-          mib.status,
-          mib.job_name,
-          mib.batchid,
-          left(coalesce(mib.job_message,''),700) as job_message
-        from semarchy_repository.mta_integ_batch mib
-        join semarchy_repository.mta_data_location mdl
-          on mdl."uuid" = mib.o_datalocation
-        where mib.upddate >= now() - interval '24 hours'
-          and mib.status in ('FAILED','ERROR','SUSPENDED')
-        order by mib.upddate desc;
+          dn."name" as notif_name,
+          dnl.execution_status,
+          coalesce(dnl."timestamp", dnl.upddate, dnl.credate) as event_ts,
+          dnl.attempt_count,
+          dnl.record_count,
+          dnl.message_count,
+          left(coalesce(dnl.error_message,''), 350) as error_message
+        from semarchy_repository.mta_data_notif_log dnl
+        join semarchy_repository.mta_data_notif dn
+          on dn."uuid" = dnl.r_datanotif
+        where coalesce(dnl."timestamp", dnl.upddate, dnl.credate) >= now() - interval '15 minutes'
+          and (
+            dnl.execution_status in ('FAILED','SUSPENDED')
+            or dnl.error_message is not null
+          )
+        order by event_ts desc;
         """;
 
-    private static String sqlEngineProbablyStoppedOverXHours(int hours) {
+    private static String sqlEngineProbablyStopped(int minutes) {
         return """
             select
               max(upddate) as last_batch_execution,
               now() - max(upddate) as age,
               case
                 when max(upddate) is null then 'NO_BATCH_FOUND'
-                when max(upddate) < now() - (%d * interval '1 hour')
-                  then 'ENGINE_PROBABLY_STOPPED'
+                when max(upddate) < now() - (%d * interval '1 minute') then 'ENGINE_PROBABLY_STOPPED'
                 else 'OK'
               end as engine_status
             from semarchy_repository.mta_integ_batch
             having max(upddate) is null
-                or max(upddate) < now() - (%d * interval '1 hour');
-            """.formatted(hours, hours);
+                or max(upddate) < now() - (%d * interval '1 minute');
+            """.formatted(minutes, minutes);
     }
 
-    private static final String SQL_GOLDEN_CREATED_YESTERDAY = """
-        select count(*) as golden_created_yesterday
-        from semarchy_data_location_account.md_account
-        where b_credate >= date_trunc('day', now() - interval '1 day')
-          and b_credate < date_trunc('day', now());
-        """;
-
-    private static final String SQL_GOLDEN_UPDATED_YESTERDAY = """
-        select count(*) as golden_updated_yesterday
-        from semarchy_data_location_account.md_account
-        where b_upddate >= date_trunc('day', now() - interval '1 day')
-          and b_upddate < date_trunc('day', now());
-        """;
-
-    private static final String SQL_RECORDS_IN_ERROR_24H = """
-        select count(*) as records_in_error_24h
-        from semarchy_data_location_account.sd_account
-        where b_credate >= now() - interval '24 hours'
-          and b_error_status is not null;
-        """;
-
-    private static final String SQL_LOADS_24H = """
-        select count(*) as loads_24h
-        from semarchy_repository.mta_integ_batch
-        where upddate >= now() - interval '24 hours';
-        """;
-
-    private static final String SQL_GOLDEN_BY_STATUS = """
-        select
-          b_pubid,
-          count(*) as nb
-        from semarchy_data_location_account.md_account
-        group by b_pubid
-        order by nb desc;
-        """;
-
-    private static final String SQL_MATCH_SUSPECTS_BY_RULE_24H = """
-        select
-          b_matchrule as match_rule,
-          count(*) as suspects_24h
-        from semarchy_data_location_account.du_account
-        where b_credate >= now() - interval '24 hours'
-        group by b_matchrule
-        order by suspects_24h desc;
-        """;
-
-    private static final String SQL_MATCH_GROUPS_BY_RULE_24H = """
-        select
-          b_matchrule as match_rule,
-          count(distinct b_matchscore) as match_groups,
-          count(*) as suspects
-        from semarchy_data_location_account.du_account
-        where b_credate >= now() - interval '24 hours'
-        group by b_matchrule
-        order by suspects desc;
-        """;
-
-    private static final String SQL_MATCH_SUSPECTS_TOTAL_BY_RULE = """
-        select
-          b_matchrule as match_rule,
-          count(*) as suspects_total
-        from semarchy_data_location_account.du_account
-        group by b_matchrule
-        order by suspects_total desc;
-        """;
-
-    private static final String SQL_NOTIF_LAST_GLOBAL = """
-        select
-          dn."name" as notif_name,
-          dnl.execution_status,
-          coalesce(dnl."timestamp", dnl.upddate, dnl.credate) as event_ts,
-          dnl.attempt_count,
-          dnl.record_count,
-          dnl.message_count,
-          dnl.query_duration,
-          dnl.sending_duration,
-          left(coalesce(dnl.error_message,''),600) as error_message
-        from semarchy_repository.mta_data_notif_log dnl
-        left join semarchy_repository.mta_data_notif dn
-          on dn."uuid" = dnl.r_datanotif
-        order by coalesce(dnl."timestamp", dnl.upddate, dnl.credate) desc
-        limit 1;
-        """;
-
-    private static final String SQL_NOTIF_STATUS_COUNTS_24H = """
-        select
-          coalesce(dnl.execution_status,'(null)') as execution_status,
-          count(*) as nb
-        from semarchy_repository.mta_data_notif_log dnl
-        where coalesce(dnl."timestamp", dnl.upddate, dnl.credate)
-              >= now() - interval '24 hours'
-        group by coalesce(dnl.execution_status,'(null)')
-        order by nb desc;
-        """;
-
-    private static final String SQL_NOTIF_ERRORS_24H = """
-        select
-          dn."name" as notif_name,
-          dnl.execution_status,
-          coalesce(dnl."timestamp", dnl.upddate, dnl.credate) as event_ts,
-          dnl.attempt_count,
-          dnl.record_count,
-          dnl.message_count,
-          left(coalesce(dnl.error_message,''),800) as error_message
-        from semarchy_repository.mta_data_notif_log dnl
-        join semarchy_repository.mta_data_notif dn
-          on dn."uuid" = dnl.r_datanotif
-        where coalesce(dnl."timestamp", dnl.upddate, dnl.credate)
-              >= now() - interval '24 hours'
-          and (
-            dnl.execution_status in ('FAILED','ERROR')
-            or dnl.error_message is not null
-          )
-        order by event_ts desc;
-        """;
-
-    @FunctionName("MorningCheckSemarchy")
+    @FunctionName("SemarchyAlertMonitoring")
     public void run(
             @TimerTrigger(name = "timerInfo", schedule = CRON) String timerInfo,
             final ExecutionContext context
     ) {
-
         var log = context.getLogger();
-        log.info("MorningCheck START - timerInfo=" + timerInfo);
+        log.info("SemarchyAlertMonitoring START - timerInfo=" + timerInfo);
 
         try {
+            ZonedDateTime currentTime = ZonedDateTime.now(ZoneId.of(MONITORING_TIMEZONE));
+            int currentHour = currentTime.getHour();
+
+            if (currentHour < MONITORING_START_HOUR || currentHour >= MONITORING_END_HOUR) {
+                log.info("Monitoring ignored during night period. Current time="
+                        + currentTime
+                        + ", allowed window="
+                        + MONITORING_START_HOUR
+                        + "h-"
+                        + MONITORING_END_HOUR
+                        + "h, timezone="
+                        + MONITORING_TIMEZONE);
+                return;
+            }
 
             String envName = getenv("ENV_NAME", "DEV");
 
@@ -293,169 +123,36 @@ public class MorningCheckFunction {
             String mailFrom = mustGet("MAIL_FROM");
             String mailTo = mustGet("MAIL_TO");
 
-            String jdbcUrl =
-                    "jdbc:postgresql://"
-                            + dbHost
-                            + ":"
-                            + dbPort
-                            + "/"
-                            + dbName
-                            + "?sslmode=require";
+            String jdbcUrl = "jdbc:postgresql://" + dbHost + ":" + dbPort + "/" + dbName + "?sslmode=require";
 
-            logDnsResolution(log, dbHost);
+            List<Map<String, Object>> blockedJobs =
+                    DbUtil.query(jdbcUrl, dbUser, dbPass, sqlBlockedJobs(JOB_BLOCKED_MINUTES));
 
-            Map<String, List<Map<String, Object>>> sections =
-                    new LinkedHashMap<>();
-
-            List<Map<String, Object>> jobErrors =
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_JOBS_FAILED_DETAILS_24H);
+            log.info("JOB_BLOCKED_MINUTES=" + JOB_BLOCKED_MINUTES);
+            log.info("blockedJobs SQL = " + sqlBlockedJobs(JOB_BLOCKED_MINUTES));
+            log.info("blockedJobs size = " + (blockedJobs == null ? -1 : blockedJobs.size()));
+            log.info("blockedJobs content = " + blockedJobs);
 
             List<Map<String, Object>> notifErrors =
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_NOTIF_ERRORS_24H);
+                    DbUtil.query(jdbcUrl, dbUser, dbPass, SQL_DATA_NOTIF_ERRORS);
 
             List<Map<String, Object>> engineStopped =
-                    DbUtil.query(
-                            jdbcUrl,
-                            dbUser,
-                            dbPass,
-                            sqlEngineProbablyStoppedOverXHours(
-                                    ENGINE_STOPPED_HOURS
-                            )
-                    );
+                    DbUtil.query(jdbcUrl, dbUser, dbPass, sqlEngineProbablyStopped(ENGINE_IDLE_MINUTES));
 
-            sections.put(
-                    "🟥 Jobs – Anomalies (FAILED/ERROR/SUSPENDED)",
-                    jobErrors
-            );
-
-            sections.put(
-                    "🟥 Data Notifications – Erreurs",
-                    notifErrors
-            );
-
-            sections.put(
-                    "🟥 Engine – Probablement arrêté > "
-                            + ENGINE_STOPPED_HOURS
-                            + " h",
-                    engineStopped
-            );
-
-            sections.put(
-                    "🟦 Jobs – RUNNING/PENDING > " + STUCK_MINUTES + " min",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            sqlJobsRunningPendingOverXMin(STUCK_MINUTES))
-            );
-
-            sections.put(
-                    "🟦 Jobs – Bloqués > " + BLOCKED_HOURS + " h",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            sqlJobsBlockedNotDoneOverXHours(BLOCKED_HOURS))
-            );
-
-            sections.put(
-                    "🟦 Jobs – Compteurs (24h)",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass, SQL_JOBS_STATUS_COUNTS_24H)
-            );
-
-            sections.put(
-                    "🟦 Jobs – Compteurs par DataLocation (24h)",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass, SQL_JOBS_STATUS_BY_DATALOC_24H)
-            );
-
-            sections.put(
-                    "🟦 Jobs – Dernier job (global)",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass, SQL_JOBS_LAST_GLOBAL)
-            );
-
-            sections.put(
-                    "🟦 Jobs – Dernier job par DataLocation",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass, SQL_JOBS_LAST_PER_DATALOC)
-            );
-
-            sections.put(
-                    "🟪 Data Notifications – Dernier log",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_NOTIF_LAST_GLOBAL)
-            );
-
-            sections.put(
-                    "🟪 Data Notifications – Compteurs par statut",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_NOTIF_STATUS_COUNTS_24H)
-            );
-
-            sections.put(
-                    "🟩 Volume – Golden créés hier",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_GOLDEN_CREATED_YESTERDAY)
-            );
-
-            sections.put(
-                    "🟩 Volume – Golden mis à jour hier",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_GOLDEN_UPDATED_YESTERDAY)
-            );
-
-            sections.put(
-                    "🟩 Volume – Records en erreur",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_RECORDS_IN_ERROR_24H)
-            );
-
-            sections.put(
-                    "🟩 Volume – Loads intégrés",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_LOADS_24H)
-            );
-
-            sections.put(
-                    "🟩 Golden – Répartition par statut",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_GOLDEN_BY_STATUS)
-            );
-
-            sections.put(
-                    "🟨 Matching – Suspects par règle",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_MATCH_SUSPECTS_BY_RULE_24H)
-            );
-
-            sections.put(
-                    "🟨 Matching – Groupes par règle",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_MATCH_GROUPS_BY_RULE_24H)
-            );
-
-            sections.put(
-                    "🟨 Matching – Suspects total par règle",
-                    DbUtil.query(jdbcUrl, dbUser, dbPass,
-                            SQL_MATCH_SUSPECTS_TOTAL_BY_RULE)
-            );
-
-            boolean hasRed =
-                    hasRows(jobErrors)
+            boolean hasAlert =
+                    hasRows(blockedJobs)
                             || hasRows(notifErrors)
                             || hasRows(engineStopped);
 
-            String emoji = hasRed ? "🔴" : "🟢";
+            if (!hasAlert) {
+                log.info("No alert detected. No email sent.");
+                return;
+            }
 
-            String now =
-                    LocalDateTime.now()
-                            .format(DateTimeFormatter.ofPattern(
-                                    "yyyy-MM-dd HH:mm"));
+            String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+            String subject = "[ALERT] MDM Account Monitoring - " + envName + " - " + now;
 
-            String html =
-                    buildHtml(envName, now, timerInfo,
-                            sections, hasRed);
-
-            String subject =
-                    emoji
-                            + " Morning Check Semarchy xDM – "
-                            + envName
-                            + " – "
-                            + now;
+            String html = buildHtml(envName, now, blockedJobs, notifErrors, engineStopped);
 
             MailUtil.sendHtml(
                     smtpHost,
@@ -468,86 +165,186 @@ public class MorningCheckFunction {
                     html
             );
 
-            log.info("MorningCheck OK");
+            log.info("Alert email sent. blockedJobs="
+                    + blockedJobs.size()
+                    + ", notifErrors="
+                    + notifErrors.size()
+                    + ", engineAlerts="
+                    + engineStopped.size());
 
         } catch (Exception e) {
-
-            log.severe(
-                    "MorningCheck FAILED: "
-                            + e.getClass().getName()
-                            + " - "
-                            + e.getMessage()
-            );
+            log.severe("SemarchyAlertMonitoring FAILED: "
+                    + e.getClass().getName()
+                    + " - "
+                    + e.getMessage());
 
             Throwable c = e.getCause();
+            int depth = 0;
 
-            while (c != null) {
-                log.severe(
-                        "Caused by: "
-                                + c.getClass().getName()
-                                + " - "
-                                + c.getMessage()
-                );
+            while (c != null && depth < 10) {
+                log.severe("Caused by: "
+                        + c.getClass().getName()
+                        + " - "
+                        + c.getMessage());
                 c = c.getCause();
+                depth++;
             }
 
             e.printStackTrace();
 
         } finally {
-            log.info("MorningCheck END");
+            log.info("SemarchyAlertMonitoring END");
         }
     }
 
     private static String buildHtml(
             String env,
             String now,
-            String timerInfo,
-            Map<String, List<Map<String, Object>>> sections,
-            boolean hasRed
+            List<Map<String, Object>> blockedJobs,
+            List<Map<String, Object>> notifErrors,
+            List<Map<String, Object>> engineStopped
     ) {
-
-        String badge =
-                hasRed
-                        ? "<span style='display:inline-block;padding:4px 10px;border-radius:999px;background:#ffe5e5;color:#a60000;font-weight:bold;'>ALERT</span>"
-                        : "<span style='display:inline-block;padding:4px 10px;border-radius:999px;background:#e7f7ea;color:#1b7f2a;font-weight:bold;'>OK</span>";
-
         StringBuilder sb = new StringBuilder();
 
-        sb.append("<html><body style='font-family:Arial,sans-serif;'>");
+        sb.append("<html><body style='font-family:Arial, sans-serif;font-size:13px;'>");
 
-        sb.append("<h2>📅 MORNING CHECK - Elis MDM ")
-                .append(badge)
-                .append("</h2>");
+        sb.append("<h2 style='color:#a60000;'>")
+          .append("🔴 [ALERT] MDM Account Monitoring")
+          .append("</h2>");
 
         sb.append("<p>")
                 .append("<b>Env:</b> ").append(escape(env)).append("<br/>")
                 .append("<b>Date:</b> ").append(escape(now)).append("<br/>")
-                .append("<b>Timer:</b> ").append(escape(timerInfo))
+                .append("<b>Fréquence:</b> toutes les 5 minutes<br/>")
+                .append("<b>Fenêtre de surveillance:</b> ")
+                .append(MONITORING_START_HOUR)
+                .append("h - ")
+                .append(MONITORING_END_HOUR)
+                .append("h")
                 .append("</p>");
 
-        for (Map.Entry<String, List<Map<String, Object>>> e : sections.entrySet()) {
+        if (hasRows(blockedJobs)) {
+            sb.append("<h3>🟥 Jobs – SUSPENDED / FAILED</h3>");
+            sb.append(actionBlock("""
+                Actions recommandées :
+                1. Aller dans Semarchy > Application Builder > Management > Moteur d’exécution.
+                2. Redémarrer le job depuis le moteur d’exécution.
+                3. Analyser ensuite l’erreur dans la colonne job_message.
+                """));
+            sb.append(toAlertHtmlTable(blockedJobs));
+        }
 
-            sb.append("<h3 style='margin-top:18px;'>")
-                    .append(escape(e.getKey()))
-                    .append("</h3>");
+        if (hasRows(notifErrors)) {
+            sb.append("<h3>🟥 Data Notifications – Erreurs / Suspensions</h3>");
+            sb.append(actionBlock("""
+                Actions recommandées :
+                1. Aller dans Semarchy > Application Builder > Management > Notifications des données.
+                2. Double-cliquer sur la notification en erreur.
+                3. Déplier la notification suspendue.
+                4. Afficher les logs dans les derniers journaux.
+                5. Analyser l’erreur de suspension.
+                6. Cliquer sur le bouton d’action puis sélectionner : traiter ces instances de notifications en un lot.
+                """));
+            sb.append(toAlertHtmlTable(notifErrors));
+        }
 
-            List<Map<String, Object>> rows = e.getValue();
-
-            if (rows == null || rows.isEmpty()) {
-                sb.append("<p style='color:#2e7d32;'>✅ Aucun élément</p>");
-            } else {
-                sb.append(DbUtil.toHtmlTable(rows));
-            }
+        if (hasRows(engineStopped)) {
+            sb.append("<h3>🟥 Semarchy Engine probablement arrêté</h3>");
+            sb.append(actionBlock("""
+                Actions recommandées :
+                1. Aller dans Semarchy > Application Builder > Management > Moteur d’exécution.
+                2. Vérifier l’état du moteur.
+                3. Appuyer sur le bouton Play vert pour redémarrer le moteur d’exécution.
+                4. Relancer ensuite le check ou attendre la prochaine exécution automatique.
+                """));
+            sb.append("<p style='color:#a60000;'>")
+                    .append("Aucun batch récent détecté. Dernier batch exécuté il y a plus de ")
+                    .append(ENGINE_IDLE_MINUTES)
+                    .append(" minutes.")
+                    .append("</p>");
+            sb.append(toAlertHtmlTable(engineStopped));
         }
 
         sb.append("<hr/>")
                 .append("<p style='color:#666;font-size:12px;'>")
-                .append("Generated by Azure Function Java")
+                .append("Generated by Azure Function Java - MDM Account Monitoring")
                 .append("</p>");
 
         sb.append("</body></html>");
 
         return sb.toString();
+    }
+
+    private static String actionBlock(String text) {
+        return "<div style='background:#fff4e5;border-left:4px solid #f59f00;"
+                + "padding:10px;margin:8px 0 12px 0;font-size:13px;line-height:1.45;'>"
+                + "<pre style='font-family:Arial, sans-serif;white-space:pre-wrap;margin:0;'>"
+                + escape(text.trim())
+                + "</pre></div>";
+    }
+
+    private static String toAlertHtmlTable(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return "<p style='color:#2e7d32;'>Aucun élément</p>";
+        }
+
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("<table style='border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:12px;table-layout:fixed;'>");
+
+        sb.append("<tr style='background:#f2f2f2;'>");
+        for (String col : rows.get(0).keySet()) {
+            sb.append("<th style='border:1px solid #ccc;padding:6px;text-align:left;'>")
+                    .append(escape(col))
+                    .append("</th>");
+        }
+        sb.append("</tr>");
+
+        for (Map<String, Object> row : rows) {
+            sb.append("<tr>");
+
+            for (Map.Entry<String, Object> cell : row.entrySet()) {
+                String col = cell.getKey();
+                String value = cell.getValue() == null ? "" : String.valueOf(cell.getValue());
+
+                String style = "border:1px solid #ccc;padding:6px;vertical-align:top;"
+                        + "white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;";
+
+                if ("job_message".equalsIgnoreCase(col) || "error_message".equalsIgnoreCase(col)) {
+                    style += "max-width:260px;width:260px;";
+                    value = wrapText(value, 55);
+                }
+
+                sb.append("<td style='").append(style).append("'>")
+                        .append(escape(value))
+                        .append("</td>");
+            }
+
+            sb.append("</tr>");
+        }
+
+        sb.append("</table>");
+        return sb.toString();
+    }
+
+    private static String wrapText(String text, int maxLineLength) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        int count = 0;
+
+        for (String word : text.split("\\s+")) {
+            if (count + word.length() > maxLineLength) {
+                sb.append("\n");
+                count = 0;
+            }
+            sb.append(word).append(" ");
+            count += word.length() + 1;
+        }
+
+        return sb.toString().trim();
     }
 
     private static boolean hasRows(List<Map<String, Object>> rows) {
@@ -556,13 +353,9 @@ public class MorningCheckFunction {
 
     private static String mustGet(String key) {
         String v = System.getenv(key);
-
         if (v == null || v.isBlank()) {
-            throw new IllegalStateException(
-                    "Missing app setting: " + key
-            );
+            throw new IllegalStateException("Missing app setting: " + key);
         }
-
         return v.trim();
     }
 
@@ -572,44 +365,10 @@ public class MorningCheckFunction {
     }
 
     private static String escape(String s) {
-
-        if (s == null) {
-            return "";
-        }
-
+        if (s == null) return "";
         return s.replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;");
-    }
-
-    private static void logDnsResolution(
-            java.util.logging.Logger log,
-            String host
-    ) {
-
-        try {
-
-            var addrs =
-                    java.net.InetAddress.getAllByName(host);
-
-            log.info(
-                    "DNS OK for "
-                            + host
-                            + " => "
-                            + java.util.Arrays.toString(addrs)
-            );
-
-        } catch (Exception ex) {
-
-            log.warning(
-                    "DNS FAIL for "
-                            + host
-                            + " => "
-                            + ex.getClass().getName()
-                            + " - "
-                            + ex.getMessage()
-            );
-        }
     }
 }
