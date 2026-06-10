@@ -30,6 +30,9 @@ public class SemarchyAlertFunction {
     private static final int JOB_BLOCKED_MINUTES =
             Integer.parseInt(getenv("JOB_BLOCKED_MINUTES", "15"));
 
+    private static final int RUNNING_JOB_MAX_MINUTES =
+            Integer.parseInt(getenv("RUNNING_JOB_MAX_MINUTES", "30"));
+
     private static String sqlBlockedJobs(int minutes) {
         return """
             select
@@ -46,6 +49,29 @@ public class SemarchyAlertFunction {
             where mib.status in ('SUSPENDED','FAILED')
             order by mib.upddate asc;
             """;
+    }
+
+    private static String sqlRunningJobsOverXMinutes(int minutes) {
+        return """
+            select
+              mdl."name" as datalocation,
+              mib.job_name,
+              mib.status,
+              mib.job_start_date,
+              mib.cur_task_name,
+              mib.cur_task_start_date,
+              now() - mib.job_start_date as running_since,
+              mib.batchid,
+              mib.job_queue_name,
+              mib.job_nb_exec,
+              left(coalesce(mib.job_message,''), 500) as job_message
+            from semarchy_repository.mta_integ_batch mib
+            left join semarchy_repository.mta_data_location mdl
+              on mdl."uuid" = mib.o_datalocation
+            where mib.status = 'RUNNING'
+              and mib.job_start_date < now() - (%d * interval '1 minute')
+            order by mib.job_start_date asc;
+            """.formatted(minutes);
     }
 
     private static final String SQL_DATA_NOTIF_ERRORS = """
@@ -128,10 +154,13 @@ public class SemarchyAlertFunction {
             List<Map<String, Object>> blockedJobs =
                     DbUtil.query(jdbcUrl, dbUser, dbPass, sqlBlockedJobs(JOB_BLOCKED_MINUTES));
 
+            List<Map<String, Object>> runningLongJobs =
+                    DbUtil.query(jdbcUrl, dbUser, dbPass, sqlRunningJobsOverXMinutes(RUNNING_JOB_MAX_MINUTES));
+
             log.info("JOB_BLOCKED_MINUTES=" + JOB_BLOCKED_MINUTES);
-            log.info("blockedJobs SQL = " + sqlBlockedJobs(JOB_BLOCKED_MINUTES));
             log.info("blockedJobs size = " + (blockedJobs == null ? -1 : blockedJobs.size()));
-            log.info("blockedJobs content = " + blockedJobs);
+            log.info("RUNNING_JOB_MAX_MINUTES=" + RUNNING_JOB_MAX_MINUTES);
+            log.info("runningLongJobs size = " + (runningLongJobs == null ? -1 : runningLongJobs.size()));
 
             List<Map<String, Object>> notifErrors =
                     DbUtil.query(jdbcUrl, dbUser, dbPass, SQL_DATA_NOTIF_ERRORS);
@@ -141,6 +170,7 @@ public class SemarchyAlertFunction {
 
             boolean hasAlert =
                     hasRows(blockedJobs)
+                            || hasRows(runningLongJobs)
                             || hasRows(notifErrors)
                             || hasRows(engineStopped);
 
@@ -149,10 +179,10 @@ public class SemarchyAlertFunction {
                 return;
             }
 
-            String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+            String now = currentTime.toLocalDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
             String subject = "[ALERT] MDM Account Monitoring - " + envName + " - " + now;
 
-            String html = buildHtml(envName, now, blockedJobs, notifErrors, engineStopped);
+            String html = buildHtml(envName, now, blockedJobs, runningLongJobs, notifErrors, engineStopped);
 
             MailUtil.sendHtml(
                     smtpHost,
@@ -167,6 +197,8 @@ public class SemarchyAlertFunction {
 
             log.info("Alert email sent. blockedJobs="
                     + blockedJobs.size()
+                    + ", runningLongJobs="
+                    + runningLongJobs.size()
                     + ", notifErrors="
                     + notifErrors.size()
                     + ", engineAlerts="
@@ -201,6 +233,7 @@ public class SemarchyAlertFunction {
             String env,
             String now,
             List<Map<String, Object>> blockedJobs,
+            List<Map<String, Object>> runningLongJobs,
             List<Map<String, Object>> notifErrors,
             List<Map<String, Object>> engineStopped
     ) {
@@ -232,6 +265,20 @@ public class SemarchyAlertFunction {
                 3. Analyser ensuite l’erreur dans la colonne job_message.
                 """));
             sb.append(toAlertHtmlTable(blockedJobs));
+        }
+
+        if (hasRows(runningLongJobs)) {
+            sb.append("<h3>🟥 Jobs – RUNNING > ")
+                    .append(RUNNING_JOB_MAX_MINUTES)
+                    .append(" minutes</h3>");
+            sb.append(actionBlock("""
+                Actions recommandées :
+                1. Aller dans Semarchy > Application Builder > Management > Moteur d’exécution.
+                2. Vérifier le job RUNNING et la tâche courante.
+                3. Contrôler cur_task_name, cur_task_start_date et job_message.
+                4. Si le job est bloqué, analyser les logs applicatifs puis redémarrer le job si nécessaire.
+                """));
+            sb.append(toAlertHtmlTable(runningLongJobs));
         }
 
         if (hasRows(notifErrors)) {
