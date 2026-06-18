@@ -7,9 +7,11 @@ import com.microsoft.azure.functions.annotation.TimerTrigger;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.DayOfWeek;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
+
 
 public class SemarchyAlertFunction {
 
@@ -32,6 +34,9 @@ public class SemarchyAlertFunction {
 
     private static final int RUNNING_JOB_MAX_MINUTES =
             Integer.parseInt(getenv("RUNNING_JOB_MAX_MINUTES", "30"));
+    
+    private static final boolean SKIP_WEEKEND =
+        Boolean.parseBoolean(getenv("SKIP_WEEKEND", "true"));
 
     private static String sqlBlockedJobs(int minutes) {
         return """
@@ -122,6 +127,14 @@ public class SemarchyAlertFunction {
             ZonedDateTime currentTime = ZonedDateTime.now(ZoneId.of(MONITORING_TIMEZONE));
             int currentHour = currentTime.getHour();
 
+            if (SKIP_WEEKEND && isWeekend(currentTime)) {
+                log.info("Monitoring ignored during weekend. Current time="
+                        + currentTime
+                        + ", timezone="
+                        + MONITORING_TIMEZONE);
+                return;
+            }    
+            
             if (currentHour < MONITORING_START_HOUR || currentHour >= MONITORING_END_HOUR) {
                 log.info("Monitoring ignored during night period. Current time="
                         + currentTime
@@ -418,4 +431,9 @@ public class SemarchyAlertFunction {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;");
     }
+
+    private static boolean isWeekend(ZonedDateTime dateTime) {
+    DayOfWeek day = dateTime.getDayOfWeek();
+    return day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;
+}
 }
