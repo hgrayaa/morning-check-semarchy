@@ -81,22 +81,37 @@ public class SemarchyAlertFunction {
 
     private static final String SQL_DATA_NOTIF_ERRORS = """
         select
-          dn."name" as notif_name,
-          dnl.execution_status,
-          coalesce(dnl."timestamp", dnl.upddate, dnl.credate) as event_ts,
-          dnl.attempt_count,
-          dnl.record_count,
-          dnl.message_count,
-          left(coalesce(dnl.error_message,''), 350) as error_message
-        from semarchy_repository.mta_data_notif_log dnl
-        join semarchy_repository.mta_data_notif dn
-          on dn."uuid" = dnl.r_datanotif
-        where coalesce(dnl."timestamp", dnl.upddate, dnl.credate) >= now() - interval '15 minutes'
+          x.notif_name,
+          x.execution_status,
+          x.event_ts,
+          x.attempt_count,
+          x.record_count,
+          x.message_count,
+          left(coalesce(x.error_message,''), 350) as error_message
+        from (
+          select
+            dn."name" as notif_name,
+            dnl.execution_status,
+            coalesce(dnl."timestamp", dnl.upddate, dnl.credate) as event_ts,
+            dnl.attempt_count,
+            dnl.record_count,
+            dnl.message_count,
+            dnl.error_message,
+            row_number() over (
+              partition by dn."name"
+              order by coalesce(dnl."timestamp", dnl.upddate, dnl.credate) desc
+            ) as rn
+          from semarchy_repository.mta_data_notif_log dnl
+          join semarchy_repository.mta_data_notif dn
+            on dn."uuid" = dnl.r_datanotif
+        ) x
+        where x.rn = 1
           and (
-            dnl.execution_status in ('FAILED','SUSPENDED')
-            or dnl.error_message is not null
+            x.execution_status in ('FAILED','SUSPENDED')
+            or x.error_message is not null
           )
-        order by event_ts desc;
+        order by x.event_ts desc;
+
         """;
 
     private static String sqlEngineProbablyStopped(int minutes) {
